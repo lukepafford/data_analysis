@@ -3,6 +3,12 @@ import pandas as pd
 from enum import Enum
 from urllib.parse import urlencode, urlparse, urlunparse, parse_qs
 
+"""
+Client tool that queries data from the Pro Football Reference
+(https://www.pro-football-reference.com/play-index/play_finder.cgi)
+and saves it to a local SQLite database
+"""
+
 
 class Position(Enum):
     """
@@ -71,7 +77,8 @@ def build_pfr_url(week: int = 1,
     return f'{base}/?{urlencode(query)}'
 
 
-def pfr_url_to_df(url: str) -> pd.DataFrame:
+def pfr_url_to_df(session: requests.sessions.Session,
+                  url: str) -> pd.DataFrame:
     """
     Takes a URL that contains a query for the
     Pro Football Reference and returns a Pandas dataframe.
@@ -108,7 +115,7 @@ def pfr_url_to_df(url: str) -> pd.DataFrame:
     }
 
     logging.info(f'Downloading data from {url}')
-    text = requests.get(url, headers=headers).text
+    text = session.get(url, headers=headers).text
     df = pd.read_html(text, skiprows=1, header=0, converters=converters)[0]
 
     # Handle multiple pages
@@ -118,7 +125,7 @@ def pfr_url_to_df(url: str) -> pd.DataFrame:
         url = increase_url_offset(url)
 
         # Continue downloading for however many pages there are
-        text = requests.get(url, headers=headers).text
+        text = session.get(url, headers=headers).text
         df2 = pd.read_html(text,
                            skiprows=1,
                            header=0,
@@ -156,6 +163,9 @@ def increase_url_offset(url: str, increase: int = 100) -> str:
 
     return url
 
+weeks = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+years = [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019]
+
 
 if __name__ == '__main__':
     import sqlite3
@@ -169,13 +179,11 @@ if __name__ == '__main__':
     sqlite_db = os.path.join(root_dir, 'nfl_data.sqlite3')
     con = sqlite3.connect(sqlite_db)
     with con:
-        weeks = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
-        years = [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019]
+        with requests.Session() as s:
+            agg_df = pd.DataFrame()
+            for possibility in product(weeks, years, Position):
+                week, year, position = possibility
+                df = pfr_url_to_df(s, build_pfr_url(week, year, position))
+                agg_df = pd.concat([agg_df, df])
 
-        agg_df = pd.DataFrame()
-        for possibility in product(weeks, years, Position):
-            week, year, position = possibility
-            df = pfr_url_to_df(build_pfr_url(week, year, position))
-            agg_df = pd.concat([agg_df, df])
-
-        agg_df.to_sql('nfl_data', con, if_exists = 'replace')
+            agg_df.to_sql('nfl_data', con, if_exists = 'replace')
