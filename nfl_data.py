@@ -1,7 +1,7 @@
 import requests
 import pandas as pd
 from enum import Enum
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse, urlunparse, parse_qs
 
 
 class Position(Enum):
@@ -14,7 +14,9 @@ class Position(Enum):
     REC = {'cstat': 'rec', 'order_by': 'rec_yds'}
 
 
-def build_pfr_url(year: int = 2019, position: Position = Position.QB) -> str:
+def build_pfr_url(year: int = 2019,
+                  position: Position = Position.QB,
+                  offset: int = 0) -> str:
     """
     Abstracts away all the key value pairs in a Pro Football Reference query,
     and allows you to only select the most relevant values
@@ -61,7 +63,8 @@ def build_pfr_url(year: int = 2019, position: Position = Position.QB) -> str:
         'c1comp': 'gt',
         'c1val': 1,
         'order_by': position.value['order_by'],
-        'from_link': 1
+        'from_link': 1,
+        'offset': offset
     }
     return f'{base}/?{urlencode(query)}'
 
@@ -81,7 +84,7 @@ def pfr_url_to_df(url: str) -> pd.DataFrame:
             '(KHTML, like Gecko) Chrome/81.0.4044.138 Safari/537.36'
         )
     }
-    text = requests.get(url, headers=headers).text
+
     # Explicitly set the types of columns
     converters = {
         'Rk': lambda x: pd.to_numeric(x, errors='ignore'),
@@ -101,7 +104,25 @@ def pfr_url_to_df(url: str) -> pd.DataFrame:
         'Y/A': lambda x: pd.to_numeric(x, errors='ignore'),
         'AY/A': lambda x: pd.to_numeric(x, errors='ignore'),
     }
+
+    text = requests.get(url, headers=headers).text
     df = pd.read_html(text, skiprows=1, header=0, converters=converters)[0]
+
+    # Handle multiple pages
+    while 'Next Page' in text:
+        # This code essentially increments the 'offset' query
+        # parameter by 100
+        url = increase_url_offset(url)
+
+        # Continue downloading for however many pages there are
+        text = requests.get(url, headers=headers).text
+        df2 = pd.read_html(text,
+                           skiprows=1,
+                           header=0,
+                           converters=converters)[0]
+
+        # Keep adding the new pages to our existing df dataframe
+        df = pd.concat([df, df2])
 
     # Filter out rows where the data repeats the header row
     df = df.loc[df.Player != 'Player']
@@ -114,6 +135,23 @@ def pfr_url_to_df(url: str) -> pd.DataFrame:
     df = df.drop('Unnamed: 7', axis='columns')
 
     return df
+
+
+def increase_url_offset(url: str, increase: int = 100) -> str:
+    """
+    Helper function for creating a new URL that acts as if
+    we clicked 'Next Page' on the PFR site. It will return
+    the same URL, except the 'offset' query parameter will add
+    100 to itself.
+    """
+    url_parts = urlparse(url)
+    query_args = parse_qs(url_parts.query)
+    query_args['offset'][0] = int(query_args['offset'][0]) + increase
+    query = urlencode(query_args, doseq=True)
+    url_parts = url_parts._replace(query=query)
+    url = urlunparse(url_parts)
+
+    return url
 
 
 if __name__ == '__main__':
