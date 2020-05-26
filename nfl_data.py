@@ -15,14 +15,22 @@ class Position(Enum):
     Enumeration to pass to `build_pfr_url`
     Handles the different query parameters for different positions
     """
-    QB = {'cstat': 'pass_att', 'order_by': 'pass_rating'}
-    RB = {'cstat': 'rush_att', 'order_by': 'rush_yds'}
-    REC = {'cstat': 'rec', 'order_by': 'rec_yds'}
-    DEF = {'cstat': 'tackles_solo', 'order_by': 'sacks'}
+    QB = {'cstat': 'pass_att',
+          'order_by': 'pass_rating',
+          'name': 'quarterbacks'}
+    RB = {'cstat': 'rush_att',
+          'order_by': 'rush_yds',
+          'name': 'runningbacks'}
+    REC = {'cstat': 'rec',
+           'order_by': 'rec_yds',
+           'name': 'receivers'}
+    DEF = {'cstat': 'tackles_solo',
+           'order_by': 'sacks',
+           'name': 'defense'}
 
 
-def build_pfr_url(week: int = 1,
-                  year: int = 2019,
+def build_pfr_url(year: int = 2019,
+                  week: int = 1,
                   position: Position = Position.QB,
                   offset: int = 0) -> str:
     """
@@ -163,8 +171,9 @@ def increase_url_offset(url: str, increase: int = 100) -> str:
 
     return url
 
-weeks = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+
 years = [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019]
+weeks = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
 
 
 if __name__ == '__main__':
@@ -180,10 +189,17 @@ if __name__ == '__main__':
     con = sqlite3.connect(sqlite_db)
     with con:
         with requests.Session() as s:
-            agg_df = pd.DataFrame()
-            for possibility in product(weeks, years, Position):
-                week, year, position = possibility
-                df = pfr_url_to_df(s, build_pfr_url(week, year, position))
-                agg_df = pd.concat([agg_df, df])
+            # Allow 100 connections in our HTTP pool
+            adapter = requests.adapters.HTTPAdapter(pool_connections=100,
+                                                    pool_maxsize=100)
+            s.mount('https://', adapter)
+            for position in Position:
+                agg_df = pd.DataFrame()
+                for query in product(years, weeks, [position]):
+                    year, week, position = query
+                    df = pfr_url_to_df(s, build_pfr_url(year, week, position))
+                    agg_df = pd.concat([agg_df, df])
 
-            agg_df.to_sql('nfl_data', con, if_exists = 'replace')
+                agg_df.to_sql(position.value['name'],
+                              con,
+                              if_exists='replace')
